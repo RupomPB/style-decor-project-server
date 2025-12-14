@@ -31,9 +31,35 @@ async function run() {
 
 
     const db = client.db('style_decor_db');
+    const usersCollection = db.collection('users')
     const servicesCollections= db.collection('services')
 
-    // service api
+    // user apis
+     app.post("/users", async(req, res) => {
+            const user = req.body;
+            const query = {};
+            user.role = "user";
+            user.createdAt = new Date().toISOString();
+            user.last_loggedIn = new Date().toISOString();
+            if(user.email){
+                query.email = user.email;
+            }
+
+            const userExists = await usersCollection.findOne(query);
+            if(userExists){
+                const updatedResult = await usersCollection.updateOne(query, {
+                    $set: {
+                        last_loggedIn: new Date().toISOString(),
+                    },
+                });
+                return res.send(updatedResult);
+            }
+
+            const result = await usersCollection.insertOne(user);
+            res.send(result);
+        });
+
+    // decoration service apis
     app.get('/services', async(req, res)=>{
 
       const query ={};
@@ -41,7 +67,10 @@ async function run() {
       const cursor  =  servicesCollections.find(query)
       const result = await cursor.toArray();
       res.send(result);
+      console.log(result)
     })
+
+   
 
 
     // Send a ping to confirm a successful connection
@@ -49,7 +78,7 @@ async function run() {
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
-    await client.close();
+    // await client.close();
   }
 }
 run().catch(console.dir);
