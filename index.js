@@ -5,7 +5,7 @@ const port =process.env.PORT || 3000
 require('dotenv').config();
 
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xnvicz3.mongodb.net/?appName=Cluster0`;
@@ -31,8 +31,9 @@ async function run() {
 
 
     const db = client.db('style_decor_db');
-    const usersCollection = db.collection('users')
-    const servicesCollections= db.collection('services')
+    const usersCollection = db.collection('users');
+    const servicesCollections= db.collection('services');
+    const decoratorsCollections =db.collection('decorators');
 
     // user apis
      app.post("/users", async(req, res) => {
@@ -69,7 +70,22 @@ async function run() {
       res.send(result);
       console.log(result)
     })
+    //single service details
+    app.get('/services/:id', async(req, res)=>{
+      const id = req.params.id;
+      const result = await servicesCollections.findOne({
+        _id: new ObjectId(id),
+      });
+      res.send(result);
+    })
 
+    // top decorators apis
+    app.get('/decorators', async(req, res)=>{
+      const query={};
+      const cursor = decoratorsCollections.find(query);
+      const result = await cursor.sort({rating: -1}).limit(3).toArray();
+      res.send(result);
+    })
    
 
 
