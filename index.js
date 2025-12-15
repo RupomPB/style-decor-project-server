@@ -88,6 +88,28 @@ async function run() {
       res.send(result);
     })
 
+    // get my booking
+    app.get('/bookings',async(req, res)=>{
+      const email= req.query.email;
+
+      const result = await bookingCollections
+      .find({userEmail: email})
+      .toArray();
+
+      res.send(result);
+    })
+
+    // delete my bookings
+    // app.delete('/bookings/:id', async(req, res)=>{
+    //   const id = req.params.id;
+
+    //   const result = await bookingCollections.deleteOne({
+    //     _id: new ObjectId(id),
+    //   });
+
+    //   res.send(result)
+    // })
+
     // top decorators apis
     app.get('/decorators', async(req, res)=>{
       const query={};
