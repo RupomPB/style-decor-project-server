@@ -34,6 +34,7 @@ async function run() {
     const usersCollection = db.collection('users');
     const servicesCollections= db.collection('services');
     const decoratorsCollections =db.collection('decorators');
+    const bookingCollections = db.collection('bookings');
 
     // user apis
      app.post("/users", async(req, res) => {
@@ -76,6 +77,14 @@ async function run() {
       const result = await servicesCollections.findOne({
         _id: new ObjectId(id),
       });
+      res.send(result);
+    })
+
+    // post bookings
+    app.post('/bookings', async(req, res)=>{
+      const booking = req.body;
+      booking.createdAt = new Date().toISOString();
+      const result = await bookingCollections.insertOne(booking);
       res.send(result);
     })
 
