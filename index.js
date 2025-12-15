@@ -100,15 +100,26 @@ async function run() {
     })
 
     // delete my bookings
-    // app.delete('/bookings/:id', async(req, res)=>{
-    //   const id = req.params.id;
+    app.delete('/bookings/:id', async(req, res)=>{
+      const id = req.params.id;
 
-    //   const result = await bookingCollections.deleteOne({
-    //     _id: new ObjectId(id),
-    //   });
+      const result = await bookingCollections.deleteOne({
+        _id: new ObjectId(id),
+      });
 
-    //   res.send(result)
-    // })
+      res.send(result)
+    })
+
+    // get bookings for payment 
+    app.get('/bookings/:id', async(req, res)=>{
+      const id = req.params.id;
+
+      const result = await bookingCollections.findOne({
+        _id: new ObjectId(id),
+      });
+
+      res.send(result);
+    })
 
     // top decorators apis
     app.get('/decorators', async(req, res)=>{
