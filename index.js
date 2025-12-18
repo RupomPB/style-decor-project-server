@@ -10,6 +10,14 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xnvicz3.mongodb.net/?appName=Cluster0`;
 
+
+// Helper function
+function generateTrackingId() {
+  const datePart = new Date().toISOString().replace(/[-:.TZ]/g, ""); // e.g., 20251218T123456 -> 20251218123456
+  const randomPart = Math.floor(1000 + Math.random() * 9000); // 4-digit random number
+  return `SD-${datePart}-${randomPart}`; // e.g., SD-20251218123456-4821
+}
+
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -32,6 +40,7 @@ async function run() {
     const servicesCollections = db.collection("services");
     const decoratorsCollections = db.collection("decorators");
     const bookingCollections = db.collection("bookings");
+    const paymentCollections = db.collection('payments')
 
     // user apis
     app.post("/users", async (req, res) => {
@@ -140,16 +149,69 @@ async function run() {
         customer_email: paymentInfo.userEmail,
         mode: "payment",
          metadata:{
-          serviceId: paymentInfo.serviceId
+          bookingId: paymentInfo.bookingId,
+          serviceName: paymentInfo.serviceName
         },
-        success_url: `${process.env.STIPE_DOMAIN}/dashboard/payment-success`,
-        cancel_url: `${process.env.STIPE_DOMAIN}/dashboard/payment-cancelled`,
+        success_url: `${process.env.STRIPE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+
+        cancel_url: `${process.env.STRIPE_DOMAIN}/dashboard/payment-cancelled`,
       });
 
       console.log(session);
       res.send({url:session.url})
 
     });
+
+
+    app.patch('/payment-success', async(req, res)=>{
+      const sessionId = req.query.session_id;
+      console.log('session  id', sessionId);
+      const trackingId = generateTrackingId();
+
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      console.log('session retrieve', session)
+      if(session.payment_status === 'paid'){
+        const id  = session.metadata.bookingId;
+        const query = {_id: new ObjectId(id)}
+        const update ={
+          $set: {
+            paymentStatus: 'paid',
+             paymentTime: new Date().toISOString(),
+             trackingId: trackingId
+
+          }
+        }
+
+        const result = await bookingCollections.updateOne(query, update);
+
+        // save payment history
+        const payment ={
+          amount: session.amount_total/100,
+          currency: session.currency,
+          customerEmail: session.customer_email,
+          bookingId: session.metadata.bookingId,
+          serviceName: session.metadata.serviceName,
+          transactionId: session.payment_intent,
+          paymentStatus: session .payment_status,
+          paidAt: new Date().toISOString(),
+           
+
+        }
+
+        if(session.payment_status === 'paid'){
+          const resultPayment = await paymentCollections.insertOne(payment)
+          
+          res.send({success: true, modifyBooking: result, paymentInfo: resultPayment, trackingId: trackingId,
+            transactionId: session.payment_intent,
+          })
+        }
+
+        res.send(result)
+
+      }
+
+      res.send({ success: false, message: 'Payment not completed yet' })
+    })
 
     // top decorators apis
     app.get("/decorators", async (req, res) => {
