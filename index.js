@@ -8,11 +8,36 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./style-decor-project-client-firebase-adminsdk.json");
+// --- FIREBASE INITIALIZATION START ---
+try {
+  const base64Key = process.env.FB_SERVICE_KEY;
+  const decoded = Buffer.from(base64Key.trim(), "base64").toString("utf8");
+  const serviceAccount = JSON.parse(decoded);
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+   
+      projectId: "style-decor-project-client" 
+    });
+    console.log("Firebase Admin SDK initialized");
+  }
+} catch (error) {
+  console.error("Firebase Init Error:", error.message);
+}
+
+// const serviceAccount = require("./style-decor-project-client-firebase-adminsdk.json");
+
+// const serviceAccount = require("./firebase-admin-key.json");
+
+// const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+//   "utf8"
+// );
+// const serviceAccount = JSON.parse(decoded);
+
+// admin.initializeApp({
+//   credential: admin.credential.cert(serviceAccount),
+// });
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
@@ -38,9 +63,8 @@ app.use(express.json());
 app.use(cors());
 
 const verifyFBToken = async (req, res, next) => {
-  // console.log('headers in the middleware', req.headers.authorization)
   const token = req.headers.authorization;
-
+console.log("seeing",token)
   if (!token) {
     return res.status(401).send({ message: "unauthorized access" });
   }
@@ -48,11 +72,11 @@ const verifyFBToken = async (req, res, next) => {
   try {
     const idToken = token.split(" ")[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
-    console.log("decoded in the token", decoded);
     req.decoded_email = decoded.email;
 
     next();
   } catch (err) {
+    console.log(err)
     return res.status(401).send({ message: "unauthorized access" });
   }
 };
@@ -69,7 +93,36 @@ async function run() {
     const bookingCollections = db.collection("bookings");
     const paymentCollections = db.collection("payments");
 
+    // middle admin before allowing admin activity must be used after verifyfbtoken with database access
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
+      next();
+    };
+
     // user apis
+
+    app.get("/users", async (req, res) => {
+      const cursor = usersCollection.find();
+      const result = await cursor.sort({ createdAt: -1 }).toArray();
+      res.send(result);
+    });
+
+    // app.get("/users/:id", async (req, res) => {});
+
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      res.send({ role: user?.role || "user" });
+    });
+
     app.post("/users", async (req, res) => {
       const user = req.body;
       const query = {};
@@ -93,6 +146,66 @@ async function run() {
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
+
+
+
+    //  get logged-in user's profile
+app.get("/users/profile", verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+
+  const user = await usersCollection.findOne({ email });
+
+  if (!user) {
+    return res.status(404).send({ message: "User not found" });
+  }
+
+  res.send(user);
+});
+
+
+    // user profile update
+    app.patch("/users/profile", verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+  const { name, phone, address } = req.body;
+
+  const result = await usersCollection.updateOne(
+    { email },
+    {
+      $set: {
+        name,
+        phone,
+        address,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+  );
+
+  res.send({
+    success: true,
+    message: "Profile updated successfully",
+    result,
+  });
+});
+
+
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const roleInfo = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            role: roleInfo.role,
+          },
+        };
+
+        const result = await usersCollection.updateOne(query, updateDoc);
+        res.send(result);
+      }
+    );
 
     // decoration service apis
     app.get("/services", async (req, res) => {
@@ -122,15 +235,20 @@ async function run() {
 
     // get my booking
     app.get("/bookings", async (req, res) => {
-      const email = req.query.email;
+      const query = {};
+      const { email, deliveryStatus } = req.query;
 
-      const result = await bookingCollections
-        .find({ userEmail: email })
-        .toArray();
+      if (email) {
+        query.userEmail = email;
+      }
 
+      if (deliveryStatus) {
+        query.deliveryStatus = deliveryStatus;
+      }
+
+      const result = await bookingCollections.find(query).toArray();
       res.send(result);
     });
-
     // delete my bookings
     app.delete("/bookings/:id", async (req, res) => {
       const id = req.params.id;
@@ -216,6 +334,7 @@ async function run() {
           $set: {
             paymentStatus: "paid",
             paymentTime: new Date().toISOString(),
+            deliveryStatus: "pending-pickup",
             trackingId: trackingId,
           },
         };
@@ -274,13 +393,20 @@ async function run() {
     });
 
     // top decorators apis
-    app.get("/decorators", async (req, res) => {
+
+    app.get("/all-decorators", async (req, res) => {
       const query = {};
-      if (req.query.status) {
-        query.status = req.query.status;
-      }
+
       const cursor = decoratorsCollections.find(query);
       const result = await cursor.sort({ rating: -1 }).limit(3).toArray();
+      res.send(result);
+    });
+
+    app.get("/decorators", async (req, res) => {
+      const query = { status: { $exists: true } };
+
+      const cursor = decoratorsCollections.find(query);
+      const result = await cursor.sort({ rating: -1 }).toArray();
       res.send(result);
     });
 
@@ -294,40 +420,50 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/decorators/:id", verifyFBToken, async (req, res) => {
-      const status = req.body.status;
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          status: status,
-        },
-      };
-
-      const result = await decoratorsCollections.updateOne(query, updateDoc);
-      // update role
-      if (status === "approved") {
+    app.patch(
+      "/decorators/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const status = req.body.status; // 'approved', 'pending', or 'rejected'
+        const id = req.params.id;
         const email = req.body.email;
-        const userQuery = { email };
-        const updateUser = {
+        const query = { _id: new ObjectId(id) };
+
+        const updateDoc = {
           $set: {
-            role: "decorator",
+            status: status,
           },
         };
-        const userResult = await usersCollection.updateOne(
-          userQuery,
-          updateUser
-        );
-      }
 
-      res.send(result);
-    });
+        const result = await decoratorsCollections.updateOne(query, updateDoc);
+
+        if (email) {
+          const userQuery = { email: email };
+          let newRole = "user";
+
+          if (status === "approved") {
+            newRole = "decorator";
+          }
+
+          const updateUser = {
+            $set: {
+              role: newRole,
+            },
+          };
+
+          await usersCollection.updateOne(userQuery, updateUser);
+        }
+
+        res.send(result);
+      }
+    );
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
